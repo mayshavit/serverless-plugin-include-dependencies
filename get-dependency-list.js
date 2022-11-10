@@ -13,14 +13,32 @@ function ignoreMissing(dependency, optional, peerDependenciesMeta) {
     || peerDependenciesMeta && dependency in peerDependenciesMeta && peerDependenciesMeta[dependency].optional;
 }
 
-module.exports = function(filename, serverless, cache) {
+module.exports = function(filename, serverless, cache, shouldIgnoreDependency) {
   const servicePath = serverless.config.servicePath;
   const modulePaths = new Set();
   const filePaths = new Set();
   const modulesToProcess = [];
   const localFilesToProcess = [filename];
 
-  function handle(name, basedir, optionalDependencies, peerDependenciesMeta) {
+  function shouldIgnorePackageJsonDependency(shouldIgnoreDependency, moduleName, basedir) {
+    if (!shouldIgnoreDependency) {
+      return false;
+    }
+
+    const pkg = readPkgUp.sync({ cwd: `${basedir}/package.json` });
+    const { packageJson } = pkg;
+    ['dependencies', 'peerDependencies', 'optionalDependencies'].forEach(key => {
+      const dependencies = packageJson[key];
+
+      if (dependencies) {
+        return Object.keys(dependencies).includes(moduleName);
+      }
+    });
+
+    return false;
+  }
+
+  function handle(name, basedir, optionalDependencies, peerDependenciesMeta, shouldIgnoreDependency) {
     const moduleName = requirePackageName(name.replace(/\\/, '/'));
     const cacheKey = `${basedir}:${name}`;
 
@@ -29,6 +47,10 @@ module.exports = function(filename, serverless, cache) {
     }
 
     try {
+      if(shouldIgnorePackageJsonDependency(shouldIgnoreDependency, moduleName, basedir)) {
+        return;
+      }
+
       const pathToModule = resolve.sync(path.join(moduleName, 'package.json'), { basedir });
       const pkg = readPkgUp.sync({ cwd: pathToModule });
 
@@ -82,7 +104,7 @@ module.exports = function(filename, serverless, cache) {
         });
         localFilesToProcess.push(abs);
       } else {
-        handle(dependency, servicePath);
+        handle(dependency, servicePath, shouldIgnoreDependency);
       }
     });
   }
@@ -104,7 +126,7 @@ module.exports = function(filename, serverless, cache) {
 
       if (dependencies) {
         Object.keys(dependencies).forEach(dependency => {
-          handle(dependency, currentModulePath, packageJson.optionalDependencies, packageJson.peerDependenciesMeta);
+          handle(dependency, currentModulePath, packageJson.optionalDependencies, packageJson.peerDependenciesMeta, shouldIgnoreDependency);
         });
       }
     });
