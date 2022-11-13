@@ -7,38 +7,38 @@ const resolve = require('resolve');
 const readPkgUp = require('read-pkg-up');
 const requirePackageName = require('require-package-name');
 const glob = require('glob');
+const lodash = require('lodash');
+const fs = require('fs');
 
 function ignoreMissing(dependency, optional, peerDependenciesMeta) {
   return optional && dependency in optional
-    || peerDependenciesMeta && dependency in peerDependenciesMeta && peerDependenciesMeta[dependency].optional;
+      || peerDependenciesMeta && dependency in peerDependenciesMeta && peerDependenciesMeta[dependency].optional;
 }
 
-module.exports = function(filename, serverless, cache, shouldIgnoreDependency) {
+module.exports = function(filename, serverless, cache) {
   const servicePath = serverless.config.servicePath;
   const modulePaths = new Set();
   const filePaths = new Set();
   const modulesToProcess = [];
   const localFilesToProcess = [filename];
 
-  function shouldIgnorePackageJsonDependency(shouldIgnoreDependency, moduleName, basedir) {
-    if (!shouldIgnoreDependency) {
-      return false;
+  const shouldUseLocalNodeModules = lodash.get(serverless.service.custom, 'serverless-plugin-include-dependencies.shouldUseLocalNodeModules', false);
+  const shouldIgnorePackageJsonDependencies = lodash.get(serverless.service.custom, 'serverless-plugin-include-dependencies.shouldIgnorePackageJsonDependencies', false);
+  const baseDirPackageJsonObject = shouldIgnorePackageJsonDependencies ? JSON.parse(fs.readFileSync(path.join(servicePath, "package.json")).toString()) : undefined;
+
+  function isModuleContainedInLocalPackageJSonDependencies(moduleName) {
+    for(const key of ['dependencies', 'peerDependencies', 'optionalDependencies']) {
+      const dependencies = baseDirPackageJsonObject[key];
+
+      if (dependencies && Object.keys(dependencies).includes(moduleName)) {
+        return true;
+      }
     }
 
-    const pkg = readPkgUp.sync({ cwd: `${basedir}/package.json` });
-    const { packageJson } = pkg;
-    ['dependencies', 'peerDependencies', 'optionalDependencies'].forEach(key => {
-      const dependencies = packageJson[key];
-
-      if (dependencies) {
-        return Object.keys(dependencies).includes(moduleName);
-      }
-    });
-
-    return false;
+    throw new Error(`module ${moduleName} should be ignored, but could not be found in package json...`);
   }
 
-  function handle(name, basedir, optionalDependencies, peerDependenciesMeta, shouldIgnoreDependency) {
+  function handle(name, basedir, optionalDependencies, peerDependenciesMeta) {
     const moduleName = requirePackageName(name.replace(/\\/, '/'));
     const cacheKey = `${basedir}:${name}`;
 
@@ -47,12 +47,24 @@ module.exports = function(filename, serverless, cache, shouldIgnoreDependency) {
     }
 
     try {
-      if(shouldIgnorePackageJsonDependency(shouldIgnoreDependency, moduleName, basedir)) {
+      let pathToModule;
+      let pkg;
+
+      if (shouldIgnorePackageJsonDependencies && isModuleContainedInLocalPackageJSonDependencies(moduleName)) {
         return;
       }
 
-      const pathToModule = resolve.sync(path.join(moduleName, 'package.json'), { basedir });
-      const pkg = readPkgUp.sync({ cwd: pathToModule });
+      if (shouldUseLocalNodeModules) {
+        pathToModule = path.join(basedir, 'node_modules', moduleName, 'package.json');
+        const jsonFile = fs.readFileSync(pathToModule).toString();
+        pkg = {
+          packageJson: JSON.parse(jsonFile),
+          path: pathToModule
+        }
+      } else {
+        pathToModule = resolve.sync(path.join(moduleName, 'package.json'), { basedir });
+        pkg = readPkgUp.sync({ cwd: pathToModule });
+      }
 
       if (pkg) {
         modulesToProcess.push(pkg);
@@ -60,7 +72,7 @@ module.exports = function(filename, serverless, cache, shouldIgnoreDependency) {
         if (cache) {
           cache.add(cacheKey);
         }
-  
+
       } else {
         // TODO: should we warn here?
       }
@@ -104,7 +116,7 @@ module.exports = function(filename, serverless, cache, shouldIgnoreDependency) {
         });
         localFilesToProcess.push(abs);
       } else {
-        handle(dependency, servicePath, shouldIgnoreDependency);
+        handle(dependency, servicePath);
       }
     });
   }
@@ -121,12 +133,13 @@ module.exports = function(filename, serverless, cache, shouldIgnoreDependency) {
 
     const { packageJson } = currentModule;
 
+
     ['dependencies', 'peerDependencies', 'optionalDependencies'].forEach(key => {
       const dependencies = packageJson[key];
 
       if (dependencies) {
         Object.keys(dependencies).forEach(dependency => {
-          handle(dependency, currentModulePath, packageJson.optionalDependencies, packageJson.peerDependenciesMeta, shouldIgnoreDependency);
+          handle(dependency, currentModulePath, packageJson.optionalDependencies, packageJson.peerDependenciesMeta);
         });
       }
     });
