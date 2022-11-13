@@ -35,7 +35,6 @@ module.exports = class IncludeDependencies {
 
     const service = this.serverless.service;
     this.individually = service.package && service.package.individually;
-    this.shouldIgnoreDependency = options['shouldIgnoreDependency'] === "true"
 
     this.hooks = {
       'before:deploy:function:packageFunction': this.functionDeploy.bind(this),
@@ -122,9 +121,9 @@ module.exports = class IncludeDependencies {
     if (!this.individually) {
       const options = this.getPluginOptions();
       if (options && options.enableCaching) {
-        return getDependencyList(fileName, this.serverless, this.cache, this.shouldIgnoreDependency);
+        return getDependencyList(fileName, this.serverless, this.cache);
       }
     }
-    return getDependencyList(fileName, this.serverless, undefined, this.shouldIgnoreDependency);
+    return getDependencyList(fileName, this.serverless);
   }
 };
